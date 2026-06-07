@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Event Intelligence Engine</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>Event Intelligence Engine</h1>
+            <p>Find flagship events, webinar pages, platforms, and evidence trails.</p>
+          </div>
+          <div class="status" id="status">Idle</div>
+        </header>
+
+        <div class="grid">
+          <section class="panel input-panel">
+            <label for="companies">Companies</label>
+            <textarea id="companies" spellcheck="false" placeholder="Snowflake,snowflake.com&#10;HubSpot,hubspot.com"></textarea>
+            <div class="credentials-card">
+              <div class="credentials-header">
+                <strong>Run Credentials</strong>
+                <span>Used only for this run</span>
+              </div>
+              <label for="serperApiKey">Serper API Key</label>
+              <input id="serperApiKey" type="password" autocomplete="off" placeholder="Required for search" />
+              <label for="llmApiKey">NVIDIA LLM API Key</label>
+              <input id="llmApiKey" type="password" autocomplete="off" placeholder="Optional, used for low-confidence results" />
+              <label for="nvidiaModel">NVIDIA Model</label>
+              <input id="nvidiaModel" type="text" autocomplete="off" placeholder="openai/gpt-oss-120b" />
+            </div>
+            <div class="controls">
+              <button id="sampleButton" type="button" class="secondary">Load Sample</button>
+              <button id="runButton" type="button">Start</button>
+              <button id="stopButton" type="button" class="danger" disabled>Stop</button>
+              <button id="clearButton" type="button" class="secondary">Clear</button>
+            </div>
+            <div class="output-path" id="outputPath"></div>
+          </section>
+
+          <section class="panel process-panel">
+            <div class="panel-title">
+              <h2>Live Process</h2>
+              <span id="eventCount">0 events</span>
+            </div>
+            <div class="current-card">
+              <div>
+                <span class="eyebrow">Current Company</span>
+                <strong id="currentCompany">Idle</strong>
+              </div>
+              <div>
+                <span class="eyebrow">Stage</span>
+                <strong id="currentStage">Waiting</strong>
+              </div>
+              <div>
+                <span class="eyebrow">Run Mode</span>
+                <strong>Sequential</strong>
+              </div>
+            </div>
+            <div class="progress-track" aria-label="Current company progress">
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <div class="timeline" id="timeline"></div>
+          </section>
+        </div>
+
+        <section class="panel browser-panel">
+          <div class="panel-title">
+            <h2>Browser View</h2>
+            <span id="browserMeta">Waiting for crawler</span>
+          </div>
+          <div class="browser-frame">
+            <img id="browserImage" alt="Latest crawled page screenshot" />
+            <div id="browserEmpty" class="browser-empty">Screenshots appear as Playwright opens candidate pages.</div>
+          </div>
+          <div id="browserUrl" class="browser-url"></div>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="panel-title">
+            <div>
+              <h2>Results Sheet</h2>
+              <p class="panel-subtitle">Rows appear as each company finishes. Export works during or after a run.</p>
+            </div>
+            <div class="result-actions">
+              <button id="exportCsvButton" type="button" class="secondary compact" disabled>Export CSV</button>
+              <span id="resultCount">0 rows</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Company</th>
+                  <th>Event Name</th>
+                  <th>Event URL</th>
+                  <th>Event Tech</th>
+                  <th>Tech Source</th>
+                  <th>Selection Source</th>
+                  <th>Registration</th>
+                  <th>Webinar URL</th>
+                  <th>Webinar Tech</th>
+                  <th>Webinar Source</th>
+                  <th>Score</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="resultsBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
