@@ -10,11 +10,22 @@
     <main class="shell">
       <section class="workspace">
         <header class="topbar">
-          <div>
+          <div class="hero-copy">
+            <div class="brand-pill">LDR Agent · Event Intelligence</div>
             <h1>Event Intelligence Engine</h1>
-            <p>Find flagship events, webinar pages, platforms, and evidence trails.</p>
+            <p>Find flagship events, webinar pages, hosted field events, platforms, registrations, and evidence trails — one company at a time.</p>
           </div>
-          <div class="status" id="status">Idle</div>
+          <div class="hero-stack">
+            <div class="mini-card pink">
+              <span>Live Browser</span>
+              <strong>1s view</strong>
+            </div>
+            <div class="mini-card lavender">
+              <span>Gmail</span>
+              <strong>Connected</strong>
+            </div>
+            <div class="status" id="status">Idle</div>
+          </div>
         </header>
 
         <div class="grid">
@@ -24,14 +35,36 @@
             <div class="credentials-card">
               <div class="credentials-header">
                 <strong>Run Credentials</strong>
-                <span>Used only for this run</span>
+                <span>Only LLM key is user-editable</span>
               </div>
-              <label for="serperApiKey">Serper API Key</label>
-              <input id="serperApiKey" type="password" autocomplete="off" placeholder="Required for search" />
               <label for="llmApiKey">NVIDIA LLM API Key</label>
-              <input id="llmApiKey" type="password" autocomplete="off" placeholder="Optional, used for low-confidence results" />
-              <label for="nvidiaModel">NVIDIA Model</label>
-              <input id="nvidiaModel" type="text" autocomplete="off" placeholder="openai/gpt-oss-120b" />
+              <input id="llmApiKey" type="password" autocomplete="off" placeholder="Optional, model is fixed server-side" />
+              <p class="field-note">Search key and model are configured on the server.</p>
+            </div>
+            <div class="credentials-card">
+              <div class="credentials-header">
+                <strong>Webinar Registration Profile</strong>
+                <span>Submitted to webinar forms</span>
+              </div>
+              <label for="webinarFullName">Full Name</label>
+              <input id="webinarFullName" type="text" autocomplete="off" placeholder="Jane Doe" />
+              <label for="webinarEmail">Email</label>
+              <input id="webinarEmail" type="email" autocomplete="off" value="admin-tools@zuddl.com" readonly />
+              <p class="field-note">Locked because Gmail polling is connected to this inbox.</p>
+              <label for="webinarCompany">Company</label>
+              <input id="webinarCompany" type="text" autocomplete="off" placeholder="Zuddl" />
+              <label for="webinarTitle">Job Title</label>
+              <input id="webinarTitle" type="text" autocomplete="off" placeholder="Marketing Operations" />
+              <div class="two-col">
+                <div>
+                  <label for="webinarPhone">Phone</label>
+                  <input id="webinarPhone" type="tel" autocomplete="off" placeholder="Optional" />
+                </div>
+                <div>
+                  <label for="webinarCountry">Country</label>
+                  <input id="webinarCountry" type="text" autocomplete="off" placeholder="United States" />
+                </div>
+              </div>
             </div>
             <div class="controls">
               <button id="sampleButton" type="button" class="secondary">Load Sample</button>
@@ -103,8 +136,16 @@
                   <th>Selection Source</th>
                   <th>Registration</th>
                   <th>Webinar URL</th>
+                  <th>Webinar Registration</th>
+                  <th>Webinar Final URL</th>
+                  <th>Email Subject</th>
                   <th>Webinar Tech</th>
                   <th>Webinar Source</th>
+                  <th>Field Events</th>
+                  <th>Field Event Type</th>
+                  <th>Field Event Link</th>
+                  <th>Field Event Platform</th>
+                  <th>Field Event Reasoning</th>
                   <th>Score</th>
                   <th>Status</th>
                 </tr>

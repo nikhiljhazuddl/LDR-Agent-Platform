@@ -34,7 +34,7 @@ export class SerperClient {
   async search(params: {
     query: string;
     maxResults: number;
-    queryType: 'event' | 'webinar';
+    queryType: 'event' | 'webinar' | 'field_event';
     signal?: AbortSignal;
   }): Promise<SearchResult[]> {
     const config = getConfig();

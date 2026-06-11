@@ -1,0 +1,12 @@
+.env
+.git
+.DS_Store
+node_modules
+dist
+coverage
+outputs
+public/run-assets
+event-intel.log
+results-buffer.jsonl
+dry-run-results.json
+.pnpm-store

@@ -43,3 +43,43 @@ export function generateWebinarQueries(company: string, domain?: string): Search
   ];
 }
 
+export function generateFieldEventQueries(company: string, domain?: string): SearchQuery[] {
+  const currentYear = new Date().getFullYear();
+  const nextYear = currentYear + 1;
+  const years = [nextYear, currentYear, currentYear - 1];
+  const baseTerms = [
+    'roadshow',
+    'workshop',
+    'meetup',
+    'user group',
+    'training',
+    'community event',
+    'local event',
+    'regional tour',
+    'customer event',
+    'field event',
+  ];
+
+  const queries: SearchQuery[] = [];
+  for (const [index, year] of years.entries()) {
+    for (const term of baseTerms.slice(0, index === 0 ? 7 : 5)) {
+      queries.push({ query: `"${company}" "${term}" ${year}`, type: 'field_event', priority: index + 1 });
+    }
+  }
+
+  if (domain) {
+    const paths = ['events', 'roadshow', 'workshop', 'meetup', 'training', 'usergroup', 'community/events', 'customers/events'];
+    for (const path of paths) {
+      queries.push({ query: `site:${domain}/${path} ${currentYear} OR ${nextYear}`, type: 'field_event', priority: 1 });
+    }
+    queries.push({ query: `site:${domain} RSVP workshop roadshow meetup`, type: 'field_event', priority: 2 });
+  }
+
+  queries.push(
+    { query: `"${company}" "join us in" RSVP`, type: 'field_event', priority: 2 },
+    { query: `"${company}" "customer roadshow"`, type: 'field_event', priority: 2 },
+    { query: `"${company}" "local workshop"`, type: 'field_event', priority: 2 }
+  );
+
+  return queries;
+}

@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { getConfig } from './config.js';
 import { processBatch } from './orchestrator.js';
 import { RESULT_HEADERS, resultToRow } from './output/result-columns.js';
-import type { CompanyInput, CompanyResult, ProgressEvent, RuntimeCredentials } from './types.js';
+import { GmailClient } from './email/gmail-client.js';
+import type { CompanyInput, CompanyResult, ProgressEvent, RuntimeCredentials, WebinarRegistrationProfile } from './types.js';
 import { normalizeDomain } from './utils/url-utils.js';
 
 interface Job {
@@ -22,6 +23,7 @@ const app = express();
 const jobs = new Map<string, Job>();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
+const CONNECTED_GMAIL_EMAIL = 'admin-tools@zuddl.com';
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(publicDir));
@@ -36,6 +38,30 @@ app.get('/api/sample-data', async (_req, res) => {
   }
 });
 
+app.get('/api/gmail/auth-url', (_req, res) => {
+  try {
+    res.json({ url: GmailClient.getOAuthAuthorizationUrl() });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message ?? String(error) });
+  }
+});
+
+app.get('/oauth/gmail/callback', async (req, res) => {
+  const code = String(req.query.code ?? '');
+  if (!code) {
+    res.status(400).send('Missing OAuth code.');
+    return;
+  }
+
+  try {
+    const refreshToken = await GmailClient.exchangeOAuthCode(code);
+    await upsertEnvValue('GMAIL_OAUTH_REFRESH_TOKEN', refreshToken);
+    res.type('html').send('<h1>Gmail connected</h1><p>You can close this tab and return to the Event Intelligence Engine.</p>');
+  } catch (error) {
+    res.status(500).send(`Gmail OAuth failed: ${escapeHtml((error as Error).message ?? String(error))}`);
+  }
+});
+
 app.post('/api/run', async (req, res) => {
   const companies = parseCompanyInput(String(req.body?.companies ?? ''));
   if (companies.length === 0) {
@@ -45,6 +71,7 @@ app.post('/api/run', async (req, res) => {
 
   const config = getConfig();
   const credentials = parseRuntimeCredentials(req.body);
+  const webinarRegistrationProfile = parseWebinarRegistrationProfile(req.body);
   if (!credentials.serperApiKey && !config.serperApiKey) {
     res.status(400).json({ error: 'Add a Serper API key to start the run.' });
     return;
@@ -76,6 +103,7 @@ app.post('/api/run', async (req, res) => {
     assetBaseUrl,
     signal: abortController.signal,
     credentials,
+    webinarRegistrationProfile,
     onProgress: event => publish(job, event),
   })
     .then(({ results }) => {
@@ -250,14 +278,29 @@ function parseCompanyInput(raw: string): CompanyInput[] {
 
 function parseRuntimeCredentials(body: unknown): RuntimeCredentials {
   const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
-  const serperApiKey = normalizedSecret(payload.serperApiKey);
   const nvidiaApiKey = normalizedSecret(payload.nvidiaApiKey) ?? normalizedSecret(payload.llmApiKey);
-  const nvidiaModel = normalizedText(payload.nvidiaModel);
   return {
-    ...(serperApiKey ? { serperApiKey } : {}),
     ...(nvidiaApiKey ? { nvidiaApiKey } : {}),
-    ...(nvidiaModel ? { nvidiaModel } : {}),
   };
+}
+
+function parseWebinarRegistrationProfile(body: unknown): WebinarRegistrationProfile | undefined {
+  const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const rawProfile =
+    payload.webinarRegistrationProfile && typeof payload.webinarRegistrationProfile === 'object'
+      ? (payload.webinarRegistrationProfile as Record<string, unknown>)
+      : payload;
+  const profile: WebinarRegistrationProfile = {
+    ...(normalizedText(rawProfile.fullName) ? { fullName: normalizedText(rawProfile.fullName) } : {}),
+    ...(normalizedText(rawProfile.firstName) ? { firstName: normalizedText(rawProfile.firstName) } : {}),
+    ...(normalizedText(rawProfile.lastName) ? { lastName: normalizedText(rawProfile.lastName) } : {}),
+    email: CONNECTED_GMAIL_EMAIL,
+    ...(normalizedText(rawProfile.company) ? { company: normalizedText(rawProfile.company) } : {}),
+    ...(normalizedText(rawProfile.title) ? { title: normalizedText(rawProfile.title) } : {}),
+    ...(normalizedText(rawProfile.phone) ? { phone: normalizedText(rawProfile.phone) } : {}),
+    ...(normalizedText(rawProfile.country) ? { country: normalizedText(rawProfile.country) } : {}),
+  };
+  return Object.keys(profile).length > 0 ? profile : undefined;
 }
 
 function normalizedSecret(value: unknown): string | undefined {
@@ -293,6 +336,29 @@ function escapeCsvCell(value: unknown): string {
 function csvFileName(job: Job): string {
   const safeJobId = job.id.replace(/[^a-zA-Z0-9-]/g, '');
   return `event-intelligence-results-${safeJobId}.csv`;
+}
+
+async function upsertEnvValue(key: string, value: string): Promise<void> {
+  const envPath = path.resolve(process.cwd(), '.env');
+  let env = '';
+  try {
+    env = await fs.readFile(envPath, 'utf8');
+  } catch {
+    // create file
+  }
+  const line = `${key}=${value}`;
+  const pattern = new RegExp(`^${key}=.*$`, 'm');
+  env = pattern.test(env) ? env.replace(pattern, line) : `${env.replace(/\s*$/, '')}\n${line}\n`;
+  await fs.writeFile(envPath, env);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 const config = getConfig();

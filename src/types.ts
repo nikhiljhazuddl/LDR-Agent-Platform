@@ -10,6 +10,51 @@ export interface RuntimeCredentials {
   anthropicApiKey?: string;
 }
 
+export interface WebinarRegistrationProfile {
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  company?: string;
+  title?: string;
+  phone?: string;
+  country?: string;
+}
+
+export type WebinarRegistrationStatus =
+  | 'not_attempted'
+  | 'no_profile'
+  | 'no_form'
+  | 'submitted'
+  | 'watch_page_opened'
+  | 'email_sent'
+  | 'email_found'
+  | 'email_timeout'
+  | 'failed';
+
+export interface WebinarAccessResult {
+  status: WebinarRegistrationStatus;
+  postRegistrationUrl: string | null;
+  finalWebinarUrl: string | null;
+  emailLinkUsed: string | null;
+  emailSubject: string | null;
+  evidence: string;
+  registrationPage?: PageAnalysis;
+  finalPage?: PageAnalysis;
+}
+
+export interface FieldEventResult {
+  status: 'Yes' | 'No';
+  type: string;
+  link: string | null;
+  registrationUrl: string | null;
+  platform: string | null;
+  platformSource: string;
+  count: number;
+  reasoning: string;
+  rankedLinks: string;
+}
+
 export type ProgressStage =
   | 'queued'
   | 'search'
@@ -35,7 +80,7 @@ export interface ProgressEvent {
 
 export interface SearchQuery {
   query: string;
-  type: 'event' | 'webinar';
+  type: 'event' | 'webinar' | 'field_event';
   priority: number;
 }
 
@@ -46,7 +91,7 @@ export interface SearchResult {
   domain: string;
   position: number;
   query: string;
-  queryType: 'event' | 'webinar';
+  queryType: 'event' | 'webinar' | 'field_event';
 }
 
 export interface ScoreBreakdown {
@@ -67,7 +112,7 @@ export interface ScoredCandidate {
   snippet: string;
   score: number;
   scoreBreakdown: ScoreBreakdown;
-  queryType: 'event' | 'webinar';
+  queryType: 'event' | 'webinar' | 'field_event';
 }
 
 export interface ScriptInfo {
@@ -112,6 +157,14 @@ export interface PageAnalysis {
   globalVariables: string[];
   loadTimeMs: number;
   redirectChain: string[];
+  formSubmitStatus?: {
+    attempted: boolean;
+    submitted: boolean;
+    message: string;
+    fieldsFilled?: string[];
+    postSubmitUrl?: string;
+    emailLikelySent?: boolean;
+  };
   screenshotUrl?: string;
   error?: string;
 }
@@ -178,9 +231,24 @@ export interface CompanyResult {
 
   webinarName: string | null;
   webinarUrl: string | null;
+  webinarRegistrationStatus: WebinarRegistrationStatus;
+  webinarPostRegistrationUrl: string | null;
+  webinarFinalUrl: string | null;
+  webinarEmailLinkUsed: string | null;
+  webinarEmailSubject: string | null;
   webinarTechnology: string | null;
   webinarTechnologySource: string;
   webinarTechEvidence: string;
+
+  fieldEventsHostedStatus: 'Yes' | 'No';
+  fieldEventsHostedType: string;
+  fieldEventLink: string | null;
+  fieldEventRegistrationUrl: string | null;
+  fieldEventsReasoning: string;
+  platformUsedForFieldEvent: string | null;
+  fieldEventPlatformSource: string;
+  numberOfFieldEventsInYearCount: number;
+  fieldEventRankedLinks: string;
 
   confidenceScore: number;
   confidenceClass: 'high' | 'medium' | 'review';

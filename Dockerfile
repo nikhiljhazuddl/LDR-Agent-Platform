@@ -3,5 +3,6 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
 RUN npm i -g pnpm && pnpm install
 COPY . .
-CMD ["npx", "tsx", "src/index.ts", "run", "--file", "companies.csv"]
-
+ENV PORT=3333
+EXPOSE 3333
+CMD ["pnpm", "start"]

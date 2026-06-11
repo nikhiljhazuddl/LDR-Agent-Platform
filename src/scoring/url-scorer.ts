@@ -226,6 +226,59 @@ const WEBINAR_SCORING_RULES: ScoringRule[] = [
   { name: 'top_3_position', points: +10, group: 'positionBonus', condition: (r) => r.position <= 3 },
 ];
 
+const FIELD_EVENT_SCORING_RULES: ScoringRule[] = [
+  {
+    name: 'official_domain',
+    points: +60,
+    group: 'domainMatch',
+    condition: (r, company, domain) => {
+      if (domain && r.domain.includes(domain.replace('www.', ''))) return true;
+      const slug = company.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return r.domain.includes(slug);
+    },
+  },
+  {
+    name: 'field_event_path',
+    points: +35,
+    group: 'keywordSignals',
+    condition: (r) => /\/(events?|roadshow|workshops?|meetups?|training|usergroup|community\/events|customers\/events|learning\/events)\b/i.test(r.url),
+  },
+  {
+    name: 'field_event_keywords',
+    points: +35,
+    group: 'keywordSignals',
+    condition: (r) => /\b(roadshow|workshop|meetup|user group|training|bootcamp|community event|local event|regional tour|customer event|join us in|rsvp)\b/i.test(`${r.url} ${r.title} ${r.snippet}`),
+  },
+  {
+    name: 'registration_or_rsvp',
+    points: +25,
+    group: 'keywordSignals',
+    condition: (r) => /\b(register|registration|rsvp|save my seat|attend)\b/i.test(`${r.url} ${r.title} ${r.snippet}`),
+  },
+  {
+    name: 'priority_year',
+    points: +25,
+    group: 'dateSignals',
+    condition: (r) => {
+      const currentYear = new Date().getFullYear();
+      return [currentYear + 1, currentYear, currentYear - 1].some(year => `${r.url} ${r.title} ${r.snippet}`.includes(String(year)));
+    },
+  },
+  {
+    name: 'third_party_participation',
+    points: -90,
+    group: 'negativeSignals',
+    condition: (r) => /\b(sponsor|exhibitor|speaker|booth|agenda|panelist|keynote|meet us at|visit us at|we'?re attending)\b/i.test(`${r.title} ${r.snippet}`),
+  },
+  {
+    name: 'blog_or_recap',
+    points: -70,
+    group: 'negativeSignals',
+    condition: (r) => /\/(blog|blogs|news|press|articles?|insights?)\//i.test(r.url) || /\b(recap|highlights|takeaways|press release)\b/i.test(`${r.title} ${r.snippet}`),
+  },
+  { name: 'top_3_position', points: +10, group: 'positionBonus', condition: (r) => r.position <= 3 },
+];
+
 function emptyBreakdown(): ScoreBreakdown {
   return {
     domainMatch: 0,
@@ -266,7 +319,12 @@ export function scoreAndRank(
 ): ScoredCandidate[] {
   return results
     .map(r => {
-      const rules = r.queryType === 'event' ? EVENT_SCORING_RULES : WEBINAR_SCORING_RULES;
+      const rules =
+        r.queryType === 'event'
+          ? EVENT_SCORING_RULES
+          : r.queryType === 'webinar'
+            ? WEBINAR_SCORING_RULES
+            : FIELD_EVENT_SCORING_RULES;
       const { score, breakdown } = scoreResult(r, companyName, companyDomain, rules);
       return {
         url: r.url,

@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+const DEFAULT_NVIDIA_MODEL = 'openai/gpt-oss-120b';
+
 const BooleanFromEnv = z
   .union([z.boolean(), z.string()])
   .transform(v => {
@@ -16,9 +18,18 @@ export const ConfigSchema = z.object({
   googleSheetsId: z.string().min(1).optional(),
   googleServiceAccountEmail: z.string().email().optional(),
   googleServiceAccountKey: z.string().min(1).optional(),
+  gmailServiceAccountEmail: z.string().email().optional(),
+  gmailServiceAccountKey: z.string().min(1).optional(),
+  gmailImpersonateEmail: z.string().email().optional(),
+  gmailOAuthClientId: z.string().min(1).optional(),
+  gmailOAuthClientSecret: z.string().min(1).optional(),
+  gmailOAuthRedirectUri: z.string().url().optional(),
+  gmailOAuthRefreshToken: z.string().min(1).optional(),
+  gmailPollTimeoutMs: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
+  gmailPollIntervalMs: z.coerce.number().int().min(2_000).max(60_000).default(5_000),
   anthropicApiKey: z.string().min(1).optional(),
   nvidiaApiKey: z.string().min(1).optional(),
-  nvidiaModel: z.string().min(1).default('openai/gpt-oss-120b'),
+  nvidiaModel: z.string().min(1).default(DEFAULT_NVIDIA_MODEL),
   excelOutputPath: z.string().min(1).default('outputs/event-intelligence-results.xlsx'),
   serverPort: z.coerce.number().int().min(1).max(65_535).default(3000),
   concurrency: z.coerce.number().int().min(1).max(10).default(1),
@@ -37,9 +48,18 @@ export function getConfig(options?: { requireSheets?: boolean; requireSerper?: b
     googleSheetsId: process.env.GOOGLE_SHEETS_ID,
     googleServiceAccountEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     googleServiceAccountKey: process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+    gmailServiceAccountEmail: process.env.GMAIL_SERVICE_ACCOUNT_EMAIL || process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    gmailServiceAccountKey: process.env.GMAIL_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+    gmailImpersonateEmail: process.env.GMAIL_IMPERSONATE_EMAIL,
+    gmailOAuthClientId: process.env.GMAIL_OAUTH_CLIENT_ID,
+    gmailOAuthClientSecret: process.env.GMAIL_OAUTH_CLIENT_SECRET,
+    gmailOAuthRedirectUri: process.env.GMAIL_OAUTH_REDIRECT_URI,
+    gmailOAuthRefreshToken: process.env.GMAIL_OAUTH_REFRESH_TOKEN,
+    gmailPollTimeoutMs: process.env.GMAIL_POLL_TIMEOUT_MS,
+    gmailPollIntervalMs: process.env.GMAIL_POLL_INTERVAL_MS,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
     nvidiaApiKey: process.env.NVIDIA_API_KEY || undefined,
-    nvidiaModel: process.env.NVIDIA_MODEL,
+    nvidiaModel: DEFAULT_NVIDIA_MODEL,
     excelOutputPath: process.env.EXCEL_OUTPUT_PATH,
     serverPort: process.env.PORT,
     concurrency: process.env.CONCURRENCY,

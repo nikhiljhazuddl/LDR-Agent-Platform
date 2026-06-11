@@ -1,10 +1,12 @@
 import type {
   CompanyInput,
   CompanyResult,
+  FieldEventResult,
   PageAnalysis,
   RegistrationSignals,
   ScoredCandidate,
   TechDetectionResult,
+  WebinarAccessResult,
 } from '../types.js';
 
 function summarizeTechSource(tech: TechDetectionResult | null): string {
@@ -52,6 +54,8 @@ export function buildResult(
   bestWebinar: ScoredCandidate | null,
   bestWebinarAnalysis: PageAnalysis | null,
   bestWebinarTech: TechDetectionResult | null,
+  bestWebinarAccess: WebinarAccessResult | null,
+  fieldEventResult: FieldEventResult,
   confidence: { score: number; class: 'high' | 'medium' | 'review' },
   aiUsed: boolean,
   processingTimeMs: number
@@ -99,9 +103,26 @@ export function buildResult(
 
     webinarName: bestWebinarAnalysis?.title || bestWebinar?.title || null,
     webinarUrl: bestWebinarAnalysis?.finalUrl || bestWebinar?.url || null,
+    webinarRegistrationStatus: bestWebinarAccess?.status ?? 'not_attempted',
+    webinarPostRegistrationUrl: bestWebinarAccess?.postRegistrationUrl ?? null,
+    webinarFinalUrl: bestWebinarAccess?.finalWebinarUrl ?? null,
+    webinarEmailLinkUsed: bestWebinarAccess?.emailLinkUsed ?? null,
+    webinarEmailSubject: bestWebinarAccess?.emailSubject ?? null,
     webinarTechnology: bestWebinarTech?.isKnownPlatform ? bestWebinarTech.platform : null,
-    webinarTechnologySource: summarizeTechSource(bestWebinarTech),
+    webinarTechnologySource: bestWebinarAccess?.evidence
+      ? `${summarizeTechSource(bestWebinarTech)} | Webinar access: ${bestWebinarAccess.evidence}`
+      : summarizeTechSource(bestWebinarTech),
     webinarTechEvidence: JSON.stringify(bestWebinarTech?.evidence ?? []),
+
+    fieldEventsHostedStatus: fieldEventResult.status,
+    fieldEventsHostedType: fieldEventResult.type,
+    fieldEventLink: fieldEventResult.link,
+    fieldEventRegistrationUrl: fieldEventResult.registrationUrl,
+    fieldEventsReasoning: fieldEventResult.reasoning,
+    platformUsedForFieldEvent: fieldEventResult.platform,
+    fieldEventPlatformSource: fieldEventResult.platformSource,
+    numberOfFieldEventsInYearCount: fieldEventResult.count,
+    fieldEventRankedLinks: fieldEventResult.rankedLinks,
 
     confidenceScore: confidence.score,
     confidenceClass: confidence.class,

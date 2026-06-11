@@ -17,9 +17,16 @@ const browserEmptyEl = document.getElementById('browserEmpty');
 const browserMetaEl = document.getElementById('browserMeta');
 const browserUrlEl = document.getElementById('browserUrl');
 const exportCsvButton = document.getElementById('exportCsvButton');
-const serperApiKeyEl = document.getElementById('serperApiKey');
 const llmApiKeyEl = document.getElementById('llmApiKey');
-const nvidiaModelEl = document.getElementById('nvidiaModel');
+const CONNECTED_GMAIL_EMAIL = 'admin-tools@zuddl.com';
+const webinarProfileEls = {
+  fullName: document.getElementById('webinarFullName'),
+  email: document.getElementById('webinarEmail'),
+  company: document.getElementById('webinarCompany'),
+  title: document.getElementById('webinarTitle'),
+  phone: document.getElementById('webinarPhone'),
+  country: document.getElementById('webinarCountry'),
+};
 
 let eventCount = 0;
 let activeJobId = null;
@@ -45,9 +52,23 @@ const resultColumns = [
   ['Sponsor Page Found', 'sponsorPageFound'],
   ['Webinar Name', 'webinarName'],
   ['Webinar URL', 'webinarUrl'],
+  ['Webinar Registration Status', 'webinarRegistrationStatus'],
+  ['Webinar Post-Registration URL', 'webinarPostRegistrationUrl'],
+  ['Webinar Final URL', 'webinarFinalUrl'],
+  ['Webinar Email Link Used', 'webinarEmailLinkUsed'],
+  ['Webinar Email Subject', 'webinarEmailSubject'],
   ['Webinar Technology', 'webinarTechnology'],
   ['Webinar Technology Source', 'webinarTechnologySource'],
   ['Webinar Tech Evidence', 'webinarTechEvidence'],
+  ['Field Events Hosted Status', 'fieldEventsHostedStatus'],
+  ['Field Events Hosted Type', 'fieldEventsHostedType'],
+  ['Field Event Link', 'fieldEventLink'],
+  ['Field Event Registration URL', 'fieldEventRegistrationUrl'],
+  ['Field Events Reasoning', 'fieldEventsReasoning'],
+  ['Platform Used For Field Event', 'platformUsedForFieldEvent'],
+  ['Field Event Platform Source', 'fieldEventPlatformSource'],
+  ['Number Of Field Events In Year Count', 'numberOfFieldEventsInYearCount'],
+  ['Field Event Ranked Links', 'fieldEventRankedLinks'],
   ['Confidence Score', 'confidenceScore'],
   ['Confidence Class', 'confidenceClass'],
   ['Last Updated', 'lastUpdated'],
@@ -73,6 +94,7 @@ clearButton.addEventListener('click', () => {
   setCurrentState('Idle', 'Waiting', 0);
   clearBrowserView();
   clearCredentialFields();
+  clearWebinarProfileFields();
   activeJobId = null;
   lastJobId = null;
   setRunningState(false);
@@ -129,9 +151,8 @@ async function runResearch() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         companies,
-        serperApiKey: serperApiKeyEl.value.trim(),
         llmApiKey: llmApiKeyEl.value.trim(),
-        nvidiaModel: nvidiaModelEl.value.trim(),
+        webinarRegistrationProfile: readWebinarProfile(),
       }),
     });
 
@@ -232,15 +253,18 @@ function setRunningState(isRunning) {
   stopButton.disabled = !isRunning;
   sampleButton.disabled = isRunning;
   clearButton.disabled = isRunning;
-  serperApiKeyEl.disabled = isRunning;
   llmApiKeyEl.disabled = isRunning;
-  nvidiaModelEl.disabled = isRunning;
+  for (const element of Object.values(webinarProfileEls)) element.disabled = isRunning;
 }
 
 function clearCredentialFields() {
-  serperApiKeyEl.value = '';
   llmApiKeyEl.value = '';
-  nvidiaModelEl.value = '';
+}
+
+function clearWebinarProfileFields() {
+  for (const [key, element] of Object.entries(webinarProfileEls)) {
+    element.value = key === 'email' ? CONNECTED_GMAIL_EMAIL : '';
+  }
 }
 
 function appendEvent(event) {
@@ -316,13 +340,29 @@ function renderResults() {
       <td>${escapeHtml(shorten(result.eventSelectionSource || result.liveMessage || ''))}</td>
       <td>${escapeHtml(result.registrationFound ? 'Yes' : 'No')}</td>
       <td>${linkCell(result.webinarUrl)}</td>
+      <td>${escapeHtml(result.webinarRegistrationStatus || '')}</td>
+      <td>${linkCell(result.webinarFinalUrl || result.webinarPostRegistrationUrl)}</td>
+      <td>${escapeHtml(shorten(result.webinarEmailSubject || ''))}</td>
       <td>${escapeHtml(result.webinarTechnology || '')}</td>
       <td>${escapeHtml(shorten(result.webinarTechnologySource || ''))}</td>
+      <td>${escapeHtml(result.fieldEventsHostedStatus || '')}</td>
+      <td>${escapeHtml(result.fieldEventsHostedType || '')}</td>
+      <td>${linkCell(result.fieldEventLink)}</td>
+      <td>${escapeHtml(result.platformUsedForFieldEvent || '')}</td>
+      <td>${escapeHtml(shorten(result.fieldEventsReasoning || ''))}</td>
       <td>${escapeHtml(result.confidenceScore === undefined ? '' : String(result.confidenceScore))}</td>
       <td>${statusCell(result)}</td>
     `;
     resultsBody.appendChild(tr);
   }
+}
+
+function readWebinarProfile() {
+  return Object.fromEntries(
+    Object.entries(webinarProfileEls)
+      .map(([key, element]) => [key, element.value.trim()])
+      .filter(([, value]) => value)
+  );
 }
 
 async function exportCsv() {

@@ -3,7 +3,9 @@ import { getConfig } from './config.js';
 import type {
   CompanyInput,
   CompanyResult,
+  FieldEventResult,
   PageAnalysis,
+  RegistrationSignals,
   ProgressEvent,
   ProgressStage,
   RuntimeCredentials,
@@ -11,9 +13,11 @@ import type {
   SearchQuery,
   SearchResult,
   TechDetectionResult,
+  WebinarAccessResult,
+  WebinarRegistrationProfile,
 } from './types.js';
 import { SerperClient } from './search/serper-client.js';
-import { generateEventQueries, generateWebinarQueries } from './search/query-generator.js';
+import { generateEventQueries, generateFieldEventQueries, generateWebinarQueries } from './search/query-generator.js';
 import { deduplicateResults } from './search/candidate-collector.js';
 import { scoreAndRank } from './scoring/url-scorer.js';
 import { BrowserPool } from './crawler/browser-pool.js';
@@ -25,6 +29,7 @@ import { buildResult } from './output/formatter.js';
 import { aiResolveAmbiguity } from './ai/fallback.js';
 import { getLogger } from './utils/logger.js';
 import { ExcelClient } from './output/excel-client.js';
+import { GmailClient } from './email/gmail-client.js';
 import fs from 'node:fs/promises';
 
 type ProgressCallback = (event: ProgressEvent) => void;
@@ -108,7 +113,7 @@ async function crawlCandidates(
   candidates: ScoredCandidate[],
   context: {
     companyName: string;
-    type: 'event' | 'webinar';
+    type: 'event' | 'webinar' | 'field_event';
     assetDir?: string;
     assetBaseUrl?: string;
     onProgress?: ProgressCallback;
@@ -140,7 +145,18 @@ async function crawlCandidates(
     });
 
     try {
-      analyses[idx] = await analyzePage(browser, c.url, { screenshotPath, screenshotUrl, signal: context.signal });
+      analyses[idx] = await analyzePage(browser, c.url, {
+        screenshotPath,
+        screenshotUrl,
+        signal: context.signal,
+        onScreenshot: detail =>
+          emitProgress(context.onProgress, 'browser', `Live ${context.type} page view`, context.companyName, {
+            ...detail,
+            candidateRank: idx + 1,
+            candidateType: context.type,
+            progressPercent,
+          }),
+      });
       emitProgress(context.onProgress, 'browser', `Captured ${context.type} page view`, context.companyName, {
         url: analyses[idx]!.finalUrl,
         title: analyses[idx]!.title,
@@ -197,6 +213,7 @@ async function crawlRegistrationTargets(
     assetBaseUrl?: string;
     onProgress?: ProgressCallback;
     signal?: AbortSignal;
+    registrationProfile?: WebinarRegistrationProfile;
   }
 ): Promise<Array<PageAnalysis | null>> {
   const registrationAnalyses: Array<PageAnalysis | null> = [];
@@ -227,6 +244,14 @@ async function crawlRegistrationTargets(
         screenshotPath,
         screenshotUrl,
         signal: context.signal,
+        webinarRegistrationProfile: context.registrationProfile,
+        onScreenshot: detail =>
+          emitProgress(context.onProgress, 'browser', 'Live registration page view', context.companyName, {
+            ...detail,
+            candidateRank: idx + 1,
+            candidateType: 'registration',
+            progressPercent: 74,
+          }),
       });
       emitProgress(context.onProgress, 'browser', 'Captured registration page source and network evidence', context.companyName, {
         url: registrationAnalyses[idx]!.finalUrl,
@@ -263,6 +288,283 @@ async function crawlRegistrationTargets(
   }
 
   return registrationAnalyses;
+}
+
+async function crawlWebinarAccess(
+  browserPool: BrowserPool,
+  candidates: ScoredCandidate[],
+  analyses: PageAnalysis[],
+  profile: WebinarRegistrationProfile | undefined,
+  gmailClient: GmailClient | null,
+  context: {
+    companyName: string;
+    assetDir?: string;
+    assetBaseUrl?: string;
+    onProgress?: ProgressCallback;
+    signal?: AbortSignal;
+  }
+): Promise<Array<WebinarAccessResult | null>> {
+  const accessResults: Array<WebinarAccessResult | null> = [];
+  if (!profile?.email) return candidates.map(() => null);
+
+  for (let idx = 0; idx < candidates.length; idx++) {
+    throwIfAborted(context.signal);
+    const analysis = analyses[idx]!;
+    const target = selectRegistrationTarget(analysis) ?? { text: 'webinar page', url: candidates[idx]!.url, source: 'candidate' };
+    const browser = await browserPool.acquire();
+    const screenshotName = `${safeFilePart(context.companyName)}-webinar-registration-${idx + 1}.png`;
+    const screenshotPath = context.assetDir ? `${context.assetDir}/${screenshotName}` : undefined;
+    const screenshotUrl = context.assetBaseUrl ? `${context.assetBaseUrl}/${screenshotName}` : undefined;
+
+    emitProgress(context.onProgress, 'registration', `Submitting webinar form: ${target.text}`, context.companyName, {
+      url: target.url,
+      candidateRank: idx + 1,
+      candidateType: 'webinar-registration',
+      progressPercent: 78,
+    });
+
+    try {
+      const submittedAt = new Date();
+      const registrationPage = await analyzePage(browser, target.url, {
+        screenshotPath,
+        screenshotUrl,
+        signal: context.signal,
+        webinarRegistrationProfile: profile,
+        onScreenshot: detail =>
+          emitProgress(context.onProgress, 'browser', 'Live webinar registration view', context.companyName, {
+            ...detail,
+            candidateRank: idx + 1,
+            candidateType: 'webinar-registration',
+            progressPercent: 79,
+          }),
+      });
+      const submitStatus = registrationPage.formSubmitStatus;
+      let status: WebinarAccessResult['status'] = submitStatus?.submitted ? 'submitted' : 'no_form';
+      if (submitStatus?.emailLikelySent) status = 'email_sent';
+      if (submitStatus?.submitted && isWatchPage(registrationPage)) status = 'watch_page_opened';
+
+      let result: WebinarAccessResult = {
+        status,
+        postRegistrationUrl: submitStatus?.postSubmitUrl ?? registrationPage.finalUrl,
+        finalWebinarUrl: status === 'watch_page_opened' ? registrationPage.finalUrl : null,
+        emailLinkUsed: null,
+        emailSubject: null,
+        evidence: submitStatus?.message ?? 'Webinar registration form was not submitted',
+        registrationPage,
+        ...(status === 'watch_page_opened' ? { finalPage: registrationPage } : {}),
+      };
+
+      emitProgress(context.onProgress, 'registration', result.evidence, context.companyName, {
+        url: result.postRegistrationUrl,
+        candidateRank: idx + 1,
+        candidateType: 'webinar-registration',
+        progressPercent: 80,
+      });
+
+      if ((status === 'email_sent' || status === 'submitted') && gmailClient) {
+        emitProgress(context.onProgress, 'registration', 'Waiting for webinar email in Gmail', context.companyName, {
+          candidateRank: idx + 1,
+          candidateType: 'gmail',
+          progressPercent: 81,
+        });
+        const emailMatch = await gmailClient.waitForWebinarEmail({
+          profile,
+          companyName: context.companyName,
+          webinarUrl: candidates[idx]!.url,
+          submittedAfter: submittedAt,
+          signal: context.signal,
+        });
+
+        if (emailMatch) {
+          emitProgress(context.onProgress, 'registration', `Found webinar email: ${emailMatch.subject}`, context.companyName, {
+            candidateRank: idx + 1,
+            candidateType: 'gmail',
+            progressPercent: 82,
+          });
+          const finalScreenshotName = `${safeFilePart(context.companyName)}-webinar-email-link-${idx + 1}.png`;
+          const finalPage = await analyzePage(browser, emailMatch.link, {
+            screenshotPath: context.assetDir ? `${context.assetDir}/${finalScreenshotName}` : undefined,
+            screenshotUrl: context.assetBaseUrl ? `${context.assetBaseUrl}/${finalScreenshotName}` : undefined,
+            signal: context.signal,
+            onScreenshot: detail =>
+              emitProgress(context.onProgress, 'browser', 'Live emailed webinar link view', context.companyName, {
+                ...detail,
+                candidateRank: idx + 1,
+                candidateType: 'webinar-email-link',
+                progressPercent: 83,
+              }),
+          });
+          result = {
+            ...result,
+            status: 'email_found',
+            finalWebinarUrl: finalPage.finalUrl,
+            emailLinkUsed: emailMatch.link,
+            emailSubject: emailMatch.subject,
+            evidence: `Submitted form; found Gmail message from ${emailMatch.from}; crawled emailed webinar link.`,
+            finalPage,
+          };
+          accessResults[idx] = result;
+          continue;
+        }
+
+        result = {
+          ...result,
+          status: 'email_timeout',
+          evidence: `${result.evidence}; no matching Gmail webinar email arrived before timeout.`,
+        };
+      } else if ((status === 'email_sent' || status === 'submitted') && !gmailClient) {
+        result = {
+          ...result,
+          evidence: `${result.evidence}; Gmail domain delegation is not configured, so emailed link could not be opened.`,
+        };
+      }
+
+      accessResults[idx] = result;
+    } catch (error) {
+      accessResults[idx] = {
+        status: 'failed',
+        postRegistrationUrl: target.url,
+        finalWebinarUrl: null,
+        emailLinkUsed: null,
+        emailSubject: null,
+        evidence: (error as Error).message ?? String(error),
+      };
+    } finally {
+      browserPool.release(browser);
+    }
+  }
+
+  return accessResults;
+}
+
+function isWatchPage(analysis: PageAnalysis): boolean {
+  const text = `${analysis.finalUrl} ${analysis.title} ${analysis.htmlContent.slice(0, 80_000)}`.toLowerCase();
+  return /\b(watch now|join now|play webinar|webinar player|on demand|on-demand|recording|session player)\b/.test(text) ||
+    /\/(watch|join|view|play|recording|on-demand|ondemand)\b/.test(text);
+}
+
+async function analyzeFieldEvents(params: {
+  browserPool: BrowserPool;
+  company: CompanyInput;
+  candidates: ScoredCandidate[];
+  analyses: PageAnalysis[];
+  registrationAnalyses: Array<PageAnalysis | null>;
+  registrations: RegistrationSignals[];
+  tech: TechDetectionResult[];
+  registrationTech: Array<TechDetectionResult | null>;
+}): Promise<FieldEventResult> {
+  const ranked = params.candidates
+    .map((candidate, index) => {
+      const analysis = params.analyses[index]!;
+      const registration = params.registrations[index]!;
+      const pageTech = params.tech[index]!;
+      const target = selectRegistrationTarget(analysis);
+      const registrationAnalysis = params.registrationAnalyses[index] ?? null;
+      const effectiveTech = params.registrationTech[index]?.isKnownPlatform ? params.registrationTech[index]! : pageTech;
+      const text = `${candidate.url} ${candidate.title} ${candidate.snippet} ${analysis.finalUrl} ${analysis.title} ${analysis.htmlContent.slice(0, 120_000)}`;
+      const year = extractPriorityYear(text);
+      const hosted = isHostedFieldEvent(params.company, candidate, analysis);
+      const thirdParty = isThirdPartyParticipation(text);
+      const fieldType = classifyFieldEventType(text);
+      let rankScore = candidate.score;
+      rankScore += year === new Date().getFullYear() + 1 ? 120 : year === new Date().getFullYear() ? 80 : year === new Date().getFullYear() - 1 ? 40 : 0;
+      rankScore += analysis.statusCode > 0 && analysis.statusCode < 400 ? 35 : -30;
+      rankScore += hosted ? 80 : -60;
+      rankScore += thirdParty ? -160 : 0;
+      rankScore += registration.found ? 35 : 0;
+      rankScore += target ? 20 : 0;
+      rankScore += effectiveTech.isKnownPlatform ? 10 : 0;
+      return {
+        candidate,
+        analysis,
+        registrationAnalysis,
+        registration,
+        tech: effectiveTech,
+        target,
+        year,
+        hosted,
+        thirdParty,
+        fieldType,
+        rankScore,
+      };
+    })
+    .filter(item => item.hosted && !item.thirdParty && item.fieldType !== 'unknown')
+    .sort((a, b) => b.rankScore - a.rankScore);
+
+  const count = ranked.length;
+  if (count === 0) {
+    const checkedLinks = params.candidates.slice(0, 5).map(candidate => candidate.url).join('; ');
+    return {
+      status: 'No',
+      type: '',
+      link: null,
+      registrationUrl: null,
+      platform: null,
+      platformSource: 'No hosted field-event platform evidence found',
+      count: 0,
+      rankedLinks: '',
+      reasoning: checkedLinks
+        ? `No company-hosted roadshow/workshop/meetup/user-group page found after excluding third-party participation pages. Checked: ${checkedLinks}`
+        : 'No field-event candidates found.',
+    };
+  }
+
+  const best = ranked[0]!;
+  return {
+    status: 'Yes',
+    type: best.fieldType,
+    link: best.analysis.finalUrl || best.candidate.url,
+    registrationUrl: best.target?.url ?? best.registrationAnalysis?.formActions?.[0] ?? null,
+    platform: best.tech.isKnownPlatform ? best.tech.platform : null,
+    platformSource: summarizeTechEvidence(best.tech),
+    count,
+    rankedLinks: ranked
+      .slice(0, 10)
+      .map((item, index) => `${index + 1}. ${item.analysis.finalUrl || item.candidate.url} (${item.fieldType}; year=${item.year ?? 'unknown'}; score=${Math.round(item.rankScore)})`)
+      .join('\n'),
+    reasoning: `Selected as company-hosted ${best.fieldType}; year=${best.year ?? 'unknown'}; accessible=${best.analysis.statusCode > 0 && best.analysis.statusCode < 400}; registration=${best.registration.found}; excluded sponsor/speaker/exhibitor participation signals.`,
+  };
+}
+
+function summarizeTechEvidence(tech: TechDetectionResult): string {
+  if (!tech.evidence.length) return tech.suspectedVendor ? `Unknown; suspected vendor: ${tech.suspectedVendor}` : 'No strong platform evidence found';
+  return tech.evidence
+    .slice(0, 3)
+    .map(e => `${e.method}: ${e.source}`)
+    .join(' | ');
+}
+
+function isHostedFieldEvent(company: CompanyInput, candidate: ScoredCandidate, analysis: PageAnalysis): boolean {
+  const text = `${candidate.url} ${candidate.title} ${candidate.snippet} ${analysis.finalUrl} ${analysis.title} ${analysis.htmlContent.slice(0, 120_000)}`.toLowerCase();
+  const domain = company.domain?.replace(/^www\./, '').toLowerCase();
+  const officialDomain = Boolean(domain && (candidate.domain.includes(domain) || safeUrl(analysis.finalUrl)?.hostname.includes(domain)));
+  const hostedSignals = /\b(hosted by|join us|rsvp|register now|save my seat|customer roadshow|local workshop|user group|community event|training session|bootcamp|regional tour)\b/i.test(text);
+  const fieldPath = /\/(events?|roadshow|workshops?|meetups?|training|usergroup|community\/events|customers\/events|learning\/events)\b/i.test(`${candidate.url} ${analysis.finalUrl}`);
+  const linkedInHosted = /linkedin\.com\/events/i.test(candidate.url) && text.includes(company.name.toLowerCase());
+  return (officialDomain && (hostedSignals || fieldPath)) || linkedInHosted;
+}
+
+function isThirdPartyParticipation(text: string): boolean {
+  return /\b(sponsor|sponsoring|exhibitor|booth|speaker|speaking session|panelist|keynote|meet us at|visit us at|we'?re attending|find us at|partner pavilion)\b/i.test(text);
+}
+
+function classifyFieldEventType(text: string): string {
+  const lower = text.toLowerCase();
+  if (/\broadshow|regional tour|city tour\b/.test(lower)) return 'roadshow';
+  if (/\bworkshop|hands-on lab|lab\b/.test(lower)) return 'workshop';
+  if (/\bmeetup\b/.test(lower)) return 'meetup';
+  if (/\buser group|usergroup\b/.test(lower)) return 'user_group';
+  if (/\btraining|bootcamp|enablement\b/.test(lower)) return 'training';
+  if (/\bcustomer event|community event|local event|gathering\b/.test(lower)) return 'community_event';
+  return 'unknown';
+}
+
+function extractPriorityYear(text: string): number | null {
+  const years = Array.from(new Set((text.match(/\b20(25|26|27)\b/g) ?? []).map(Number)));
+  if (years.includes(2027)) return 2027;
+  if (years.includes(2026)) return 2026;
+  if (years.includes(2025)) return 2025;
+  return null;
 }
 
 function safeFilePart(value: string): string {
@@ -380,6 +682,7 @@ export async function processCompany(
     assetBaseUrl?: string;
     signal?: AbortSignal;
     credentials?: RuntimeCredentials;
+    webinarRegistrationProfile?: WebinarRegistrationProfile;
   }
 ): Promise<CompanyResult> {
   const startTime = Date.now();
@@ -392,6 +695,7 @@ export async function processCompany(
       config.nvidiaApiKey ||
       config.anthropicApiKey
   );
+  const gmailClient = GmailClient.isConfigured() ? new GmailClient() : null;
 
   logger.info('company.start', { company: company.name });
   throwIfAborted(deps.signal);
@@ -399,23 +703,29 @@ export async function processCompany(
 
   const eventQueries = generateEventQueries(company.name, company.domain);
   const webinarQueries = generateWebinarQueries(company.name, company.domain);
+  const fieldEventQueries = generateFieldEventQueries(company.name, company.domain);
 
   const eventResults = await executeAdaptiveSearch(serper, eventQueries, company.name, company.domain, deps.onProgress, deps.signal);
   emitProgress(deps.onProgress, 'search', 'Event search complete', company.name, { progressPercent: 18 });
   const webinarResults = await executeAdaptiveSearch(serper, webinarQueries, company.name, company.domain, deps.onProgress, deps.signal);
   emitProgress(deps.onProgress, 'search', 'Webinar search complete', company.name, { progressPercent: 30 });
+  const fieldEventResults = await executeAdaptiveSearch(serper, fieldEventQueries, company.name, company.domain, deps.onProgress, deps.signal);
+  emitProgress(deps.onProgress, 'search', 'Field event search complete', company.name, { progressPercent: 33 });
   throwIfAborted(deps.signal);
 
   emitProgress(deps.onProgress, 'scoring', 'Scoring and ranking candidates', company.name, {
     eventResults: eventResults.length,
     webinarResults: webinarResults.length,
+    fieldEventResults: fieldEventResults.length,
     progressPercent: 35,
   });
   const scoredEvents = scoreAndRank(eventResults, company.name, company.domain);
   const scoredWebinars = scoreAndRank(webinarResults, company.name, company.domain);
+  const scoredFieldEvents = scoreAndRank(fieldEventResults, company.name, company.domain);
 
   const topEventCandidates = scoredEvents.slice(0, 5);
   const topWebinarCandidates = scoredWebinars.slice(0, 2);
+  const topFieldEventCandidates = scoredFieldEvents.slice(0, 8);
 
   emitProgress(deps.onProgress, 'crawl', 'Crawling top event and webinar candidates', company.name, {
     events: topEventCandidates.map(c => c.url),
@@ -442,6 +752,16 @@ export async function processCompany(
     progressEnd: 72,
     signal: deps.signal,
   });
+  const fieldEventAnalyses = await crawlCandidates(deps.browserPool, topFieldEventCandidates, {
+    companyName: company.name,
+    type: 'field_event',
+    assetDir: deps.assetDir,
+    assetBaseUrl: deps.assetBaseUrl,
+    onProgress: deps.onProgress,
+    progressStart: 72,
+    progressEnd: 78,
+    signal: deps.signal,
+  });
 
   throwIfAborted(deps.signal);
   const eventRegistrationPages = await crawlRegistrationTargets(deps.browserPool, eventAnalyses, {
@@ -451,19 +771,58 @@ export async function processCompany(
     onProgress: deps.onProgress,
     signal: deps.signal,
   });
+  const fieldEventRegistrationPages = await crawlRegistrationTargets(deps.browserPool, fieldEventAnalyses, {
+    companyName: company.name,
+    assetDir: deps.assetDir,
+    assetBaseUrl: deps.assetBaseUrl,
+    onProgress: deps.onProgress,
+    signal: deps.signal,
+    registrationProfile: deps.webinarRegistrationProfile,
+  });
+  const webinarAccessResults = await crawlWebinarAccess(
+    deps.browserPool,
+    topWebinarCandidates,
+    webinarAnalyses,
+    deps.webinarRegistrationProfile,
+    gmailClient,
+    {
+      companyName: company.name,
+      assetDir: deps.assetDir,
+      assetBaseUrl: deps.assetBaseUrl,
+      onProgress: deps.onProgress,
+      signal: deps.signal,
+    }
+  );
+  const effectiveWebinarAnalyses = webinarAnalyses.map((analysis, index) => {
+    const access = webinarAccessResults[index];
+    return access?.finalPage ?? access?.registrationPage ?? analysis;
+  });
 
   emitProgress(deps.onProgress, 'registration', 'Detecting registration signals', company.name, { progressPercent: 76 });
   const eventRegistrations = await Promise.all(eventAnalyses.map(a => detectRegistration(a)));
-  const webinarRegistrations = await Promise.all(webinarAnalyses.map(a => detectRegistration(a)));
+  const webinarRegistrations = await Promise.all(effectiveWebinarAnalyses.map(a => detectRegistration(a)));
+  const fieldEventRegistrations = await Promise.all(fieldEventAnalyses.map(a => detectRegistration(a)));
 
   emitProgress(deps.onProgress, 'technology', 'Detecting event and webinar platforms', company.name, { progressPercent: 84 });
-  const [eventTech, webinarTech] = await Promise.all([
+  const [eventTech, webinarTech, fieldEventTech, fieldEventRegistrationTech] = await Promise.all([
     Promise.all(eventAnalyses.map((a, index) => detectTechnologyWithRegistration(a, eventRegistrationPages[index] ?? null))),
-    Promise.all(webinarAnalyses.map(a => detectTechnology(a))),
+    Promise.all(effectiveWebinarAnalyses.map(a => detectTechnology(a))),
+    Promise.all(fieldEventAnalyses.map(a => detectTechnology(a))),
+    Promise.all(fieldEventRegistrationPages.map(a => (a ? detectTechnology(a) : Promise.resolve(null)))),
   ]);
+  const fieldEventResult = await analyzeFieldEvents({
+    browserPool: deps.browserPool,
+    company,
+    candidates: topFieldEventCandidates,
+    analyses: fieldEventAnalyses,
+    registrationAnalyses: fieldEventRegistrationPages,
+    registrations: fieldEventRegistrations,
+    tech: fieldEventTech,
+    registrationTech: fieldEventRegistrationTech,
+  });
 
   let bestEventIdx = selectBestCandidate(topEventCandidates, eventRegistrations, eventTech, eventAnalyses);
-  const bestWebinarIdx = selectBestCandidate(topWebinarCandidates, webinarRegistrations, webinarTech, webinarAnalyses);
+  const bestWebinarIdx = selectBestCandidate(topWebinarCandidates, webinarRegistrations, webinarTech, effectiveWebinarAnalyses);
 
   let confidence: { score: number; class: 'high' | 'medium' | 'review' } = {
     score: 0,
@@ -499,8 +858,10 @@ export async function processCompany(
     bestEventIdx >= 0 ? eventRegistrations[bestEventIdx]! : null,
     bestEventIdx >= 0 ? eventTech[bestEventIdx]! : null,
     bestWebinarIdx >= 0 ? topWebinarCandidates[bestWebinarIdx]! : null,
-    bestWebinarIdx >= 0 ? webinarAnalyses[bestWebinarIdx]! : null,
+    bestWebinarIdx >= 0 ? effectiveWebinarAnalyses[bestWebinarIdx]! : null,
     bestWebinarIdx >= 0 ? webinarTech[bestWebinarIdx]! : null,
+    bestWebinarIdx >= 0 ? webinarAccessResults[bestWebinarIdx] ?? null : null,
+    fieldEventResult,
     confidence,
     aiUsed,
     Date.now() - startTime
@@ -534,6 +895,7 @@ export async function processBatch(params: {
   signal?: AbortSignal;
   onProgress?: ProgressCallback;
   credentials?: RuntimeCredentials;
+  webinarRegistrationProfile?: WebinarRegistrationProfile;
 }): Promise<{ results: CompanyResult[] }> {
   const logger = getLogger();
   const config = getConfig();
@@ -564,6 +926,7 @@ export async function processBatch(params: {
           assetBaseUrl: params.assetBaseUrl,
           signal: params.signal,
           credentials: { ...params.credentials, serperApiKey },
+          webinarRegistrationProfile: params.webinarRegistrationProfile,
         });
         results.push(result);
         if (excelClient) {
@@ -622,9 +985,23 @@ function buildFailedResult(company: CompanyInput, error: unknown): CompanyResult
     sponsorPageFound: false,
     webinarName: null,
     webinarUrl: null,
+    webinarRegistrationStatus: 'not_attempted',
+    webinarPostRegistrationUrl: null,
+    webinarFinalUrl: null,
+    webinarEmailLinkUsed: null,
+    webinarEmailSubject: null,
     webinarTechnology: null,
     webinarTechnologySource: 'No result; company failed before webinar detection',
     webinarTechEvidence: '[]',
+    fieldEventsHostedStatus: 'No',
+    fieldEventsHostedType: '',
+    fieldEventLink: null,
+    fieldEventRegistrationUrl: null,
+    fieldEventsReasoning: 'No result; company failed before field event detection',
+    platformUsedForFieldEvent: null,
+    fieldEventPlatformSource: 'No result; company failed before field event platform detection',
+    numberOfFieldEventsInYearCount: 0,
+    fieldEventRankedLinks: '',
     confidenceScore: 0,
     confidenceClass: 'review',
     lastUpdated: new Date().toISOString(),
